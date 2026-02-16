@@ -8,7 +8,7 @@ app_license = "agpl-3.0"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["erpnext"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -40,10 +40,10 @@ app_license = "agpl-3.0"
 # webform_include_css = {"doctype": "public/css/doctype.css"}
 
 # include js in page
-# page_js = {"page" : "public/js/file.js"}
+page_js = {"point-of-sale": "public/js/navari_pos_extension.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {"Sales Person": "public/js/salesperson_customization.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -132,13 +132,14 @@ app_license = "agpl-3.0"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+    "Sales Person": {
+        "before_save": "navari_pos_extension.navari_pos_extension.overrides.sales_person.validate_unique_pos_pin"
+    },
+    "Sales Invoice": {
+        "before_submit": "navari_pos_extension.navari_pos_extension.overrides.sales_invoice.validate_sales_person_on_submit"
+    },
+}
 
 # Scheduled Tasks
 # ---------------
@@ -249,4 +250,3 @@ app_license = "agpl-3.0"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
