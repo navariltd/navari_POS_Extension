@@ -16,6 +16,19 @@ frappe.ui.form.on("Sales Invoice", {
 		add_salesperson_auth_section(frm);
 	},
 
+	onload: function (frm) {
+		const remember_preference = localStorage.getItem("pos_remember_salesperson");
+		const should_remember =
+			remember_preference === null ? true : remember_preference === "true";
+		if (!should_remember) {
+			clear_salesperson_cache();
+			clear_sales_team(frm);
+			$("#salesperson-card").hide();
+			$("#pin-input-section").show();
+			pos_customization.current_salesperson = null;
+		}
+	},
+
 	before_save: function (frm) {
 		clear_sales_team(frm);
 		if (pos_customization.current_salesperson) {
@@ -35,13 +48,18 @@ function add_salesperson_auth_section(frm) {
 		return;
 	}
 
+	const remember_preference = localStorage.getItem("pos_remember_salesperson");
+	const should_remember = remember_preference === null ? true : remember_preference === "true";
+
 	const $auth_section = $(`
         <div class="salesperson-auth-section" style="border-radius: 6px;">
 			<p class="section-label">${__("Sales Person")}</p>
             <!-- Remember Checkbox -->
             <div class="form-group" style="margin-bottom: 10px;">
                 <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
-                    <input type="checkbox" id="remember-salesperson-checkbox" checked style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
+                    <input type="checkbox" id="remember-salesperson-checkbox" 
+                        ${should_remember ? "checked" : ""} 
+                        style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
                     <span>${__("Remember Sales Person")}</span>
                 </label>
             </div>
@@ -117,6 +135,8 @@ function bind_salesperson_events(frm) {
 		.off("change", "#remember-salesperson-checkbox")
 		.on("change", "#remember-salesperson-checkbox", function () {
 			const is_checked = $(this).is(":checked");
+
+			localStorage.setItem("pos_remember_salesperson", is_checked);
 
 			if (!is_checked) {
 				clear_salesperson_cache();
