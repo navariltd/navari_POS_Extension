@@ -35,10 +35,6 @@ frappe.ui.form.on("Sales Invoice", {
 			add_salesperson_to_sales_team(frm, pos_customization.current_salesperson);
 		}
 	},
-
-	on_submit: function (frm) {
-		override_default_pos_print_format();
-	},
 });
 
 function add_salesperson_auth_section(frm) {
@@ -341,104 +337,4 @@ function clear_sales_team(frm) {
 
 	frm.doc.sales_team = [];
 	frm.refresh_field("sales_team");
-}
-
-function override_default_pos_print_format() {
-	erpnext.PointOfSale.PastOrderSummary.prototype.get_upper_section_html = function (doc) {
-		const { status } = doc;
-		let indicator_color = "";
-		const is_customer_naming_by_customer_name =
-			frappe.sys_defaults.cust_master_name !== "Customer Name";
-
-		["Paid", "Consolidated"].includes(status) && (indicator_color = "green");
-		["Partly Paid", "Overdue"].includes(status) && (indicator_color = "yellow");
-		["Draft", "Unpaid"].includes(status) && (indicator_color = "red");
-		["Credit Note Issued", "Return"].includes(status) && (indicator_color = "grey");
-
-		const sold_by =
-			doc.sales_team && doc.sales_team.length > 0
-				? doc.sales_team[0].sales_person
-				: doc.owner;
-
-		return `
-                    <div class="left-section">
-                        <div class="customer-section">
-                            <div class="customer-name">${doc.customer_name}</div>
-                            ${
-								is_customer_naming_by_customer_name
-									? `<div class="customer-code">${doc.customer}</div>`
-									: ""
-							}
-                            <div class="customer-email">${this.customer_email}</div>
-                        </div>
-                        <div class="cashier">${__("Sold by")}: ${sold_by}</div>
-                    </div>
-                    <div class="right-section">
-                        <div class="paid-amount">${format_currency(doc.paid_amount, doc.currency)}</div>
-                        <div class="invoice-name">${doc.name}</div>
-                        <span class="indicator-pill whitespace-nowrap ${indicator_color}">
-                            <span>${__(doc.status)}</span>
-                        </span>
-                    </div>
-                `;
-	};
-
-	// Patch print_receipt/send_email to use custom print format
-	erpnext.PointOfSale.PastOrderSummary.prototype.print_receipt = function () {
-		const frm = this.events.get_frm();
-		const custom_print_format = "Custom POS Invoice";
-
-		frappe.utils.print(
-			this.doc.doctype,
-			this.doc.name,
-			custom_print_format,
-			this.doc.letter_head,
-			this.doc.language || frappe.boot.lang,
-		);
-	};
-
-	erpnext.PointOfSale.PastOrderSummary.prototype.send_email = function () {
-		const frm = this.events.get_frm();
-		const recipients = this.email_dialog.get_values().email_id;
-		const content = this.email_dialog.get_values().content;
-		const doc = this.doc || frm.doc;
-		const custom_print_format = "Custom POS Invoice";
-
-		frappe.call({
-			method: "frappe.core.doctype.communication.email.make",
-			args: {
-				recipients: recipients,
-				subject: __(frm.meta.name) + ": " + doc.name,
-				content: content ? content : __(frm.meta.name) + ": " + doc.name,
-				doctype: doc.doctype,
-				name: doc.name,
-				send_email: 1,
-				print_format: custom_print_format,
-				sender_full_name: frappe.user.full_name(),
-				_lang: doc.language,
-			},
-			callback: (r) => {
-				if (!r.exc) {
-					frappe.utils.play_sound("email");
-					if (r.message["emails_not_sent_to"]) {
-						frappe.msgprint(
-							__("Email not sent to {0} (unsubscribed / disabled)", [
-								frappe.utils.escape_html(r.message["emails_not_sent_to"]),
-							]),
-						);
-					} else {
-						frappe.show_alert({
-							message: __("Email sent successfully."),
-							indicator: "green",
-						});
-					}
-					this.email_dialog.hide();
-				} else {
-					frappe.msgprint(
-						__("There were errors while sending email. Please try again."),
-					);
-				}
-			},
-		});
-	};
 }
