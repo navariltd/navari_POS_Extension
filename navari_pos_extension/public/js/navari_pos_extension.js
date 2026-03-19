@@ -14,6 +14,7 @@ pos_customization.current_salesperson = null;
 frappe.ui.form.on("Sales Invoice", {
 	refresh: function (frm) {
 		add_salesperson_auth_section(frm);
+		add_customer_pin_section(frm);
 	},
 
 	onload: function (frm) {
@@ -35,7 +36,228 @@ frappe.ui.form.on("Sales Invoice", {
 			add_salesperson_to_sales_team(frm, pos_customization.current_salesperson);
 		}
 	},
+
+	customer: function (frm) {
+		load_customer_tax_id(frm);
+	},
 });
+
+function add_customer_pin_section(frm) {
+	const $payment_section = $(".payment-container-right");
+
+	if ($payment_section.find(".customer-pin-section").length > 0) {
+		load_customer_tax_id(frm);
+		return;
+	}
+
+	const $pin_section = $(`
+		<div class="customer-pin-section" style="border-radius: 6px; margin-bottom: 10px;">
+			<p class="section-label">${__("Tax ID")}</p>
+
+			<!-- Read-only display when tax_id exists -->
+			<div id="customer-tax-id-display" style="display: none; padding: 10px 12px; background-color: var(--fg-color); box-shadow: var(--shadow-base); border-radius: 4px; margin-bottom: 8px;">
+				<div style="display: flex; align-items: center; justify-content: space-between;">
+					<div>
+						<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 2px;">${__("Existing Tax ID")}</div>
+						<div style="font-weight: 600; font-size: 14px; letter-spacing: 1px;" id="customer-tax-id-value">--</div>
+					</div>
+					<button class="btn btn-xs btn-default" id="edit-tax-id-btn" style="padding: 4px 12px;">
+						<svg style="width: 12px; height: 12px; margin-right: 4px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+						</svg>
+						${__("Edit")}
+					</button>
+				</div>
+			</div>
+
+			<!-- Input form -->
+			<div id="customer-tax-id-input-section" style="display: none;">
+				<div class="form-group" style="margin-bottom: 8px;">
+					<label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__("Enter Customer PIN / Tax ID")}</label>
+					<div style="display: flex; gap: 8px; align-items: flex-start;">
+						<input
+							type="text"
+							id="customer-tax-id-input"
+							class="form-control"
+							placeholder="${__("e.g. A123456789P")}"
+							style="flex: 1; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;"
+							autocomplete="off">
+						<button class="btn btn-primary btn-sm" id="save-tax-id-btn" style="padding: 6px 16px; white-space: nowrap;">
+							<svg style="width: 14px; height: 14px; margin-right: 4px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+							</svg>
+							${__("Save")}
+						</button>
+						<button class="btn btn-default btn-sm" id="cancel-tax-id-btn" style="padding: 6px 12px;">
+							${__("Cancel")}
+						</button>
+					</div>
+				</div>
+				<div id="tax-id-error-message" style="display: none; font-size: 12px; margin-top: 5px; padding: 8px; border-left: 3px solid #e74c3c; border-radius: 3px;">
+					<strong>${__("Error")}:</strong> <span id="tax-id-error-text"></span>
+				</div>
+			</div>
+
+			<!-- Empty state: no customer selected or no tax_id -->
+			<div id="customer-tax-id-empty" style="display: none; font-size: 13px; color: var(--text-muted); padding: 8px 0;">
+				${__("No Tax ID on file.")}
+				<a href="#" id="add-tax-id-link" style="margin-left: 6px;">${__("Add one →")}</a>
+			</div>
+
+			<!-- Loading -->
+			<div id="customer-tax-id-loading" style="display: none; text-align: center; padding: 10px;">
+				<div class="spinner-border spinner-border-sm" role="status" style="margin-right: 8px;">
+					<span class="sr-only">${__("Loading...")}</span>
+				</div>
+				${__("Loading...")}
+			</div>
+		</div>
+	`);
+
+	const $salesperson_section = $payment_section.find(".salesperson-auth-section");
+	if ($salesperson_section.length) {
+		$salesperson_section.after($pin_section);
+	} else {
+		const $insert_point = $payment_section.find(".fields-numpad-container");
+		if ($insert_point.length) {
+			$insert_point.before($pin_section);
+		} else {
+			$payment_section.prepend($pin_section);
+		}
+	}
+
+	bind_customer_pin_events(frm);
+	load_customer_tax_id(frm);
+}
+
+function bind_customer_pin_events(frm) {
+	// Edit button — switch display card to input form
+	$(document)
+		.off("click", "#edit-tax-id-btn")
+		.on("click", "#edit-tax-id-btn", function () {
+			const current_value = $("#customer-tax-id-value").text();
+			$("#customer-tax-id-input").val(current_value !== "--" ? current_value : "");
+			$("#customer-tax-id-display").hide();
+			$("#customer-tax-id-input-section").show();
+			$("#tax-id-error-message").hide();
+			$("#customer-tax-id-input").focus();
+		});
+
+	// "Add one" link from empty state
+	$(document)
+		.off("click", "#add-tax-id-link")
+		.on("click", "#add-tax-id-link", function (e) {
+			e.preventDefault();
+			$("#customer-tax-id-empty").hide();
+			$("#customer-tax-id-input").val("");
+			$("#customer-tax-id-input-section").show();
+			$("#tax-id-error-message").hide();
+			$("#customer-tax-id-input").focus();
+		});
+
+	// Cancel button — go back to appropriate state
+	$(document)
+		.off("click", "#cancel-tax-id-btn")
+		.on("click", "#cancel-tax-id-btn", function () {
+			$("#customer-tax-id-input-section").hide();
+			$("#tax-id-error-message").hide();
+			if (frm.doc.tax_id) {
+				$("#customer-tax-id-display").show();
+			} else {
+				$("#customer-tax-id-empty").show();
+			}
+		});
+
+	// Save button
+	$(document)
+		.off("click", "#save-tax-id-btn")
+		.on("click", "#save-tax-id-btn", function () {
+			save_customer_tax_id(frm);
+		});
+
+	// Enter key on input
+	$(document)
+		.off("keypress", "#customer-tax-id-input")
+		.on("keypress", "#customer-tax-id-input", function (e) {
+			if (e.which === 13) {
+				e.preventDefault();
+				save_customer_tax_id(frm);
+			}
+		});
+
+	// Clear error on input change and auto-uppercase
+	$(document)
+		.off("input", "#customer-tax-id-input")
+		.on("input", "#customer-tax-id-input", function () {
+			$("#tax-id-error-message").hide();
+			const pos = this.selectionStart;
+			this.value = this.value.toUpperCase();
+			this.setSelectionRange(pos, pos);
+		});
+}
+
+function load_customer_tax_id(frm) {
+	$("#customer-tax-id-display").hide();
+	$("#customer-tax-id-input-section").hide();
+	$("#customer-tax-id-empty").hide();
+	$("#customer-tax-id-loading").hide();
+	$("#tax-id-error-message").hide();
+
+	if (!frm.doc.customer) {
+		return;
+	}
+
+	if (frm.doc.tax_id) {
+		$("#customer-tax-id-value").text(frm.doc.tax_id);
+		$("#customer-tax-id-display").show();
+		return;
+	}
+
+	$("#customer-tax-id-loading").show();
+
+	frappe.db.get_value("Customer", frm.doc.customer, "tax_id", function (value) {
+		$("#customer-tax-id-loading").hide();
+
+		const tax_id = value && value.tax_id ? value.tax_id : null;
+
+		if (tax_id) {
+			frm.set_value("tax_id", tax_id);
+			$("#customer-tax-id-value").text(tax_id);
+			$("#customer-tax-id-display").show();
+		} else {
+			$("#customer-tax-id-empty").show();
+		}
+	});
+}
+
+function save_customer_tax_id(frm) {
+	const tax_id = $("#customer-tax-id-input").val().trim().toUpperCase();
+
+	if (!tax_id) {
+		document.activeElement && document.activeElement.blur();
+
+		frappe.confirm(__("The Tax ID field is empty. Continue with empty PIN?"), function () {
+			frm.set_value("tax_id", "");
+
+			$("#customer-tax-id-input-section").hide();
+			$("#tax-id-error-message").hide();
+			$("#customer-tax-id-empty").show();
+		});
+		return;
+	}
+
+	frm.set_value("tax_id", tax_id);
+
+	$("#customer-tax-id-value").text(tax_id);
+	$("#customer-tax-id-input-section").hide();
+	$("#customer-tax-id-display").show();
+	$("#tax-id-error-message").hide();
+}
+
+function show_tax_id_error(message) {
+	$("#tax-id-error-text").text(message);
+	$("#tax-id-error-message").show();
+}
 
 function add_salesperson_auth_section(frm) {
 	const $payment_section = $(".payment-container-right");
@@ -53,13 +275,13 @@ function add_salesperson_auth_section(frm) {
             <!-- Remember Checkbox -->
             <div class="form-group" style="margin-bottom: 10px;">
                 <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
-                    <input type="checkbox" id="remember-salesperson-checkbox" 
-                        ${should_remember ? "checked" : ""} 
+                    <input type="checkbox" id="remember-salesperson-checkbox"
+                        ${should_remember ? "checked" : ""}
                         style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">
                     <span>${__("Remember Sales Person")}</span>
                 </label>
             </div>
-            
+
             <!-- Salesperson Card (shown when remembered) -->
             <div id="salesperson-card" style="display: none; padding: 12px; background-color: var(--fg-color); box-shadow: var(--shadow-base); border-radius: 4px; margin-bottom: 10px;">
                 <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -75,17 +297,17 @@ function add_salesperson_auth_section(frm) {
                     </button>
                 </div>
             </div>
-            
+
             <!-- PIN Input Section (shown when not remembered or changing) -->
             <div id="pin-input-section" style="display: none;">
                 <div class="form-group" style="margin-bottom: 10px;">
                     <label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__("Enter Your 4-Digit PIN")}</label>
                     <div style="display: flex; gap: 8px; align-items: flex-start;">
-                        <input 
-                            type="password" 
-                            id="salesperson-pin-input" 
-                            class="form-control" 
-                            maxlength="4" 
+                        <input
+                            type="password"
+                            id="salesperson-pin-input"
+                            class="form-control"
+                            maxlength="4"
                             pattern="[0-9]{4}"
                             placeholder="••••"
                             style="width: 120px; font-size: 18px; letter-spacing: 4px; text-align: center; font-weight: bold;"
@@ -102,7 +324,7 @@ function add_salesperson_auth_section(frm) {
                     <strong>${__("Error")}:</strong> <span id="pin-error-text"></span>
                 </div>
             </div>
-            
+
             <!-- Loading Indicator -->
             <div id="salesperson-loading" style="display: none; text-align: center; padding: 10px; ">
                 <div class="spinner-border spinner-border-sm" role="status" style="margin-right: 8px;">
