@@ -2,6 +2,23 @@ import frappe
 from frappe import _
 
 
+class CustomSalesInvoice:
+	def validate_pos_opening_entry(self):
+		opening_entries = frappe.get_all(
+			"POS Opening Entry",
+			fields=["name", "period_start_date"],
+			filters={"pos_profile": self.pos_profile, "status": "Open"},
+			order_by="period_start_date desc",
+		)
+		if not opening_entries:
+			frappe.throw(
+				title=_("POS Opening Entry Missing"),
+				msg=_("No open POS Opening Entry found for POS Profile {0}.").format(
+					frappe.bold(self.pos_profile)
+				),
+			)
+
+
 def validate_sales_person_on_submit(doc, method=None):
     """
     Check if Sales Person is required for POS transactions and validate before submitting the Sales Invoice
