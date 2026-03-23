@@ -171,9 +171,10 @@ doc_events = {
 # ------------------------------
 #
 # Specify custom mixins to extend the standard doctype controller.
-# extend_doctype_class = {
-# 	"Task": "navari_pos_extension.custom.task.CustomTaskMixin"
-# }
+extend_doctype_class = {
+	"Sales Invoice": "navari_pos_extension.navari_pos_extension.overrides.sales_invoice.CustomSalesInvoice",
+	"POS Opening Entry": "navari_pos_extension.navari_pos_extension.overrides.pos_opening_entry.CustomPOSOpeningEntry",
+}
 
 # Overriding Methods
 # ------------------------------
