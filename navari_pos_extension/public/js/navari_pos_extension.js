@@ -1,3 +1,4 @@
+/* global pos_customization */
 frappe.provide("pos_customization");
 
 pos_customization.get_device_id = function () {
@@ -14,7 +15,7 @@ pos_customization.current_salesperson = null;
 frappe.ui.form.on("Sales Invoice", {
 	refresh: function (frm) {
 		get_pos_profile_settings(frm, function (settings) {
-			if (settings.custom_require_sales_person) {
+			if (settings.custom_sales_person_pin_required) {
 				add_salesperson_auth_section(frm);
 			}
 		});
@@ -46,7 +47,7 @@ function get_pos_profile_settings(frm, callback) {
 	frappe.db.get_value(
 		"POS Profile",
 		frm.doc.pos_profile,
-		["custom_require_sales_person"],
+		["custom_sales_person_pin_required"],
 		function (value) {
 			const settings = value || {};
 			callback(settings);
