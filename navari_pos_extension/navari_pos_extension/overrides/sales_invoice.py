@@ -32,7 +32,7 @@ def validate_sales_person_on_submit(doc, method=None):
     require_sales_person = frappe.db.get_value(
         "POS Profile",
         doc.pos_profile,
-        "custom_require_sales_person",
+        "custom_sales_person_pin_required",
     )
 
     # If setting is enabled, check Sales Team table

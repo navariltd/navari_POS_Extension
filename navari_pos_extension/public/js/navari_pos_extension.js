@@ -1,3 +1,4 @@
+/* global pos_customization */
 frappe.provide("pos_customization");
 
 pos_customization.get_device_id = function () {
@@ -13,8 +14,12 @@ pos_customization.current_salesperson = null;
 
 frappe.ui.form.on("Sales Invoice", {
 	refresh: function (frm) {
-		add_salesperson_auth_section(frm);
-		add_customer_pin_section(frm);
+		get_pos_profile_settings(frm, function (settings) {
+			if (settings.custom_sales_person_pin_required) {
+				add_salesperson_auth_section(frm);
+			}
+		});
+		add_invoice_tax_id_section(frm);
 	},
 
 	onload: function (frm) {
@@ -36,29 +41,59 @@ frappe.ui.form.on("Sales Invoice", {
 			add_salesperson_to_sales_team(frm, pos_customization.current_salesperson);
 		}
 	},
-
-	customer: function (frm) {
-		load_customer_tax_id(frm);
-	},
 });
 
-function add_customer_pin_section(frm) {
+function get_pos_profile_settings(frm, callback) {
+	frappe.db.get_value(
+		"POS Profile",
+		frm.doc.pos_profile,
+		["custom_sales_person_pin_required"],
+		function (value) {
+			const settings = value || {};
+			callback(settings);
+		},
+	);
+}
+
+function is_walk_in_customer(customer_name, callback) {
+	frappe.db.get_value("Customer", customer_name, ["custom_is_walkin"], function (value) {
+		callback(value.custom_is_walkin);
+	});
+}
+
+function add_invoice_tax_id_section(frm) {
+	$(".payment-split-container").css("height", "100%");
+
+	is_walk_in_customer(frm.doc.customer, function (is_walkin) {
+		if (!is_walkin) {
+			$(".customer-pin-section").remove();
+			return;
+		}
+	});
+
 	const $payment_section = $(".payment-container-right");
 
 	if ($payment_section.find(".customer-pin-section").length > 0) {
-		load_customer_tax_id(frm);
 		return;
 	}
 
 	const $pin_section = $(`
-		<div class="customer-pin-section" style="border-radius: 6px; margin-bottom: 10px;">
-			<p class="section-label">${__("Tax ID")}</p>
+		<div class="customer-pin-section pos-widget-card" style="
+			border: 1px solid var(--border-color, #e0e0e0);
+			border-radius: 8px;
+			padding: 8px;
+			margin-bottom: 10px;
+			background: var(--fg-color);
+		">
+			<p class="section-label" style="margin-bottom: 10px; font-weight: 600; font-size: 13px; color: var(--text-muted); letter-spacing: 0.5px;">
+				${__("Enter KRA PIN (optional)")}
+			</p>
 
 			<!-- Read-only display when tax_id exists -->
-			<div id="customer-tax-id-display" style="display: none; padding: 10px 12px; background-color: var(--fg-color); box-shadow: var(--shadow-base); border-radius: 4px; margin-bottom: 8px;">
+			<div id="customer-tax-id-display" style="display: none; padding: 10px 12px; background-color: var(--control-bg); border-radius: 4px; margin-bottom: 8px;">
 				<div style="display: flex; align-items: center; justify-content: space-between;">
 					<div>
-						<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 2px;">${__("Existing Tax ID")}</div>
+						<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 2px;">${__("Tax ID")}</div>
 						<div style="font-weight: 600; font-size: 14px; letter-spacing: 1px;" id="customer-tax-id-value">--</div>
 					</div>
 					<button class="btn btn-xs btn-default" id="edit-tax-id-btn" style="padding: 4px 12px;">
@@ -71,9 +106,8 @@ function add_customer_pin_section(frm) {
 			</div>
 
 			<!-- Input form -->
-			<div id="customer-tax-id-input-section" style="display: none;">
+			<div id="customer-tax-id-input-section">
 				<div class="form-group" style="margin-bottom: 8px;">
-					<label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__("Enter Customer PIN / Tax ID")}</label>
 					<div style="display: flex; gap: 8px; align-items: flex-start;">
 						<input
 							type="text"
@@ -88,20 +122,11 @@ function add_customer_pin_section(frm) {
 							</svg>
 							${__("Save")}
 						</button>
-						<button class="btn btn-default btn-sm" id="cancel-tax-id-btn" style="padding: 6px 12px;">
-							${__("Cancel")}
-						</button>
 					</div>
 				</div>
 				<div id="tax-id-error-message" style="display: none; font-size: 12px; margin-top: 5px; padding: 8px; border-left: 3px solid #e74c3c; border-radius: 3px;">
 					<strong>${__("Error")}:</strong> <span id="tax-id-error-text"></span>
 				</div>
-			</div>
-
-			<!-- Empty state: no customer selected or no tax_id -->
-			<div id="customer-tax-id-empty" style="display: none; font-size: 13px; color: var(--text-muted); padding: 8px 0;">
-				${__("No Tax ID on file.")}
-				<a href="#" id="add-tax-id-link" style="margin-left: 6px;">${__("Add one →")}</a>
 			</div>
 
 			<!-- Loading -->
@@ -126,11 +151,10 @@ function add_customer_pin_section(frm) {
 		}
 	}
 
-	bind_customer_pin_events(frm);
-	load_customer_tax_id(frm);
+	bind_invoice_tax_id_events(frm);
 }
 
-function bind_customer_pin_events(frm) {
+function bind_invoice_tax_id_events(frm) {
 	// Edit button — switch display card to input form
 	$(document)
 		.off("click", "#edit-tax-id-btn")
@@ -143,19 +167,7 @@ function bind_customer_pin_events(frm) {
 			$("#customer-tax-id-input").focus();
 		});
 
-	// "Add one" link from empty state
-	$(document)
-		.off("click", "#add-tax-id-link")
-		.on("click", "#add-tax-id-link", function (e) {
-			e.preventDefault();
-			$("#customer-tax-id-empty").hide();
-			$("#customer-tax-id-input").val("");
-			$("#customer-tax-id-input-section").show();
-			$("#tax-id-error-message").hide();
-			$("#customer-tax-id-input").focus();
-		});
-
-	// Cancel button — go back to appropriate state
+	// Cancel button
 	$(document)
 		.off("click", "#cancel-tax-id-btn")
 		.on("click", "#cancel-tax-id-btn", function () {
@@ -164,7 +176,7 @@ function bind_customer_pin_events(frm) {
 			if (frm.doc.tax_id) {
 				$("#customer-tax-id-display").show();
 			} else {
-				$("#customer-tax-id-empty").show();
+				$("#customer-tax-id-input-section").show();
 			}
 		});
 
@@ -172,7 +184,7 @@ function bind_customer_pin_events(frm) {
 	$(document)
 		.off("click", "#save-tax-id-btn")
 		.on("click", "#save-tax-id-btn", function () {
-			save_customer_tax_id(frm);
+			set_invoice_tax_id(frm);
 		});
 
 	// Enter key on input
@@ -181,7 +193,7 @@ function bind_customer_pin_events(frm) {
 		.on("keypress", "#customer-tax-id-input", function (e) {
 			if (e.which === 13) {
 				e.preventDefault();
-				save_customer_tax_id(frm);
+				set_invoice_tax_id(frm);
 			}
 		});
 
@@ -196,52 +208,16 @@ function bind_customer_pin_events(frm) {
 		});
 }
 
-function load_customer_tax_id(frm) {
-	$("#customer-tax-id-display").hide();
-	$("#customer-tax-id-input-section").hide();
-	$("#customer-tax-id-empty").hide();
-	$("#customer-tax-id-loading").hide();
-	$("#tax-id-error-message").hide();
-
-	if (!frm.doc.customer) {
-		return;
-	}
-
-	if (frm.doc.tax_id) {
-		$("#customer-tax-id-value").text(frm.doc.tax_id);
-		$("#customer-tax-id-display").show();
-		return;
-	}
-
-	$("#customer-tax-id-loading").show();
-
-	frappe.db.get_value("Customer", frm.doc.customer, "tax_id", function (value) {
-		$("#customer-tax-id-loading").hide();
-
-		const tax_id = value && value.tax_id ? value.tax_id : null;
-
-		if (tax_id) {
-			frm.set_value("tax_id", tax_id);
-			$("#customer-tax-id-value").text(tax_id);
-			$("#customer-tax-id-display").show();
-		} else {
-			$("#customer-tax-id-empty").show();
-		}
-	});
-}
-
-function save_customer_tax_id(frm) {
+function set_invoice_tax_id(frm) {
 	const tax_id = $("#customer-tax-id-input").val().trim().toUpperCase();
 
 	if (!tax_id) {
 		document.activeElement && document.activeElement.blur();
 
-		frappe.confirm(__("The Tax ID field is empty. Continue with empty PIN?"), function () {
+		frappe.confirm(__("The Tax ID field is empty. Continue with empty Tax ID?"), function () {
 			frm.set_value("tax_id", "");
-
-			$("#customer-tax-id-input-section").hide();
+			$("#customer-tax-id-input-section").show();
 			$("#tax-id-error-message").hide();
-			$("#customer-tax-id-empty").show();
 		});
 		return;
 	}
@@ -270,8 +246,17 @@ function add_salesperson_auth_section(frm) {
 	const should_remember = remember_preference === null ? true : remember_preference === "true";
 
 	const $auth_section = $(`
-        <div class="salesperson-auth-section" style="border-radius: 6px;">
-			<p class="section-label">${__("Sales Person")}</p>
+        <div class="salesperson-auth-section pos-widget-card" style="
+			border: 1px solid var(--border-color, #e0e0e0);
+			border-radius: 8px;
+			padding: 8px;
+			margin-bottom: 10px;
+			background: var(--fg-color);
+		">
+			<p class="section-label" style="margin-bottom: 10px; font-weight: 600; font-size: 13px; color: var(--text-muted); letter-spacing: 0.5px;">
+				${__("Sales Person")}
+			</p>
+
             <!-- Remember Checkbox -->
             <div class="form-group" style="margin-bottom: 10px;">
                 <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
@@ -283,25 +268,27 @@ function add_salesperson_auth_section(frm) {
             </div>
 
             <!-- Salesperson Card (shown when remembered) -->
-            <div id="salesperson-card" style="display: none; padding: 12px; background-color: var(--fg-color); box-shadow: var(--shadow-base); border-radius: 4px; margin-bottom: 10px;">
+            <div id="salesperson-card" style="display: none; padding: 10px 12px; background-color: var(--control-bg); border-radius: 4px; margin-bottom: 10px;">
                 <div style="display: flex; align-items: center; justify-content: space-between;">
                     <div style="flex: 1;">
-                        <div style="font-weight: 600;  font-size: 14px;" id="salesperson-display-name">--</div>
-                        <div style="font-size: 12px; margin-top: 2px;" id="salesperson-display-id">--</div>
+                        <div style="font-weight: 600; font-size: 14px;" id="salesperson-display-name">--</div>
+                        <div style="font-size: 12px; margin-top: 2px; color: var(--text-muted);" id="salesperson-display-id">--</div>
                     </div>
                     <button class="btn btn-xs btn-default" id="change-salesperson-btn" style="padding: 4px 12px;">
                         <svg style="width: 12px; height: 12px; margin-right: 4px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                         </svg>
-                        Change
+                        ${__("Change")}
                     </button>
                 </div>
             </div>
 
-            <!-- PIN Input Section (shown when not remembered or changing) -->
+            <!-- PIN Input Section -->
             <div id="pin-input-section" style="display: none;">
                 <div class="form-group" style="margin-bottom: 10px;">
-                    <label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__("Enter Your 4-Digit PIN")}</label>
+                    <label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__(
+						"Enter Your 4-Digit PIN",
+					)}</label>
                     <div style="display: flex; gap: 8px; align-items: flex-start;">
                         <input
                             type="password"
@@ -316,11 +303,11 @@ function add_salesperson_auth_section(frm) {
                             <svg style="width: 14px; height: 14px; margin-right: 4px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                             </svg>
-                            Verify
+                            ${__("Verify")}
                         </button>
                     </div>
                 </div>
-                <div id="pin-error-message" style="display: none; font-size: 12px; margin-top: 5px; padding: 8px; background:  border-left: 3px solid #e74c3c; border-radius: 3px;">
+                <div id="pin-error-message" style="display: none; font-size: 12px; margin-top: 5px; padding: 8px; border-left: 3px solid #e74c3c; border-radius: 3px;">
                     <strong>${__("Error")}:</strong> <span id="pin-error-text"></span>
                 </div>
             </div>
