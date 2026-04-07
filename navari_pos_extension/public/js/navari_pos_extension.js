@@ -1,5 +1,30 @@
-/* global pos_customization */
+/* global pos_customization, erpnext */
 frappe.provide("pos_customization");
+frappe.provide("erpnext");
+
+$(document).ready(() => {
+	if (erpnext && erpnext.PointOfSale && erpnext.PointOfSale.ItemDetails) {
+		erpnext.PointOfSale.ItemDetails.prototype.get_form_fields = function (item) {
+			const fields = [
+				"qty",
+				"uom",
+				"rate",
+				"conversion_factor",
+				"discount_percentage",
+				"warehouse",
+				"actual_qty",
+				"price_list_rate",
+				"batch_no",
+			];
+
+			if (item.has_serial_no || item.serial_no) {
+				fields.push("serial_no");
+			}
+
+			return fields;
+		};
+	}
+});
 
 pos_customization.get_device_id = function () {
 	let device_id = localStorage.getItem("pos_device_id");
@@ -51,7 +76,7 @@ function get_pos_profile_settings(frm, callback) {
 		function (value) {
 			const settings = value || {};
 			callback(settings);
-		},
+		}
 	);
 }
 
@@ -287,7 +312,7 @@ function add_salesperson_auth_section(frm) {
             <div id="pin-input-section" style="display: none;">
                 <div class="form-group" style="margin-bottom: 10px;">
                     <label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__(
-						"Enter Your 4-Digit PIN",
+						"Enter Your 4-Digit PIN"
 					)}</label>
                     <div style="display: flex; gap: 8px; align-items: flex-start;">
                         <input
@@ -478,7 +503,7 @@ function verify_salesperson_pin(frm) {
 						message: __("Welcome, {0}!", [r.message.salesperson_name]),
 						indicator: "green",
 					},
-					3,
+					3
 				);
 			} else {
 				$("#pin-input-section").show();
