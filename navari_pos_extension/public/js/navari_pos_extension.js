@@ -2,29 +2,45 @@
 frappe.provide("pos_customization");
 frappe.provide("erpnext");
 
-$(document).ready(() => {
-	if (erpnext && erpnext.PointOfSale && erpnext.PointOfSale.ItemDetails) {
-		erpnext.PointOfSale.ItemDetails.prototype.get_form_fields = function (item) {
-			const fields = [
-				"qty",
-				"uom",
-				"rate",
-				"conversion_factor",
-				"discount_percentage",
-				"warehouse",
-				"actual_qty",
-				"price_list_rate",
-				"batch_no",
-			];
+// Override get_form_fields to include batch_no in POS ItemDetails
+(function () {
+	if (!window.location.pathname.includes("point-of-sale")) return;
 
-			if (item.has_serial_no || item.serial_no) {
-				fields.push("serial_no");
-			}
+	let attempts = 0;
+	const max_attempts = 10;
 
-			return fields;
-		};
-	}
-});
+	const interval = setInterval(() => {
+		attempts++;
+
+		if (erpnext?.PointOfSale?.ItemDetails) {
+			erpnext.PointOfSale.ItemDetails.prototype.get_form_fields = function (item) {
+				const fields = [
+					"qty",
+					"uom",
+					"rate",
+					"conversion_factor",
+					"discount_percentage",
+					"warehouse",
+					"actual_qty",
+					"price_list_rate",
+					"batch_no",
+				];
+
+				if (item.has_serial_no || item.serial_no) {
+					fields.push("serial_no");
+				}
+
+				return fields;
+			};
+
+			clearInterval(interval);
+		}
+
+		if (attempts >= max_attempts) {
+			clearInterval(interval); // stop trying after max attempts
+		}
+	}, 300);
+})();
 
 pos_customization.get_device_id = function () {
 	let device_id = localStorage.getItem("pos_device_id");
