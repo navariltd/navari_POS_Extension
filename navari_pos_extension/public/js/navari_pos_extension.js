@@ -1,5 +1,186 @@
-/* global pos_customization */
+/* global pos_customization, erpnext */
 frappe.provide("pos_customization");
+frappe.provide("erpnext");
+
+// Override on_cart_update to always add new cart item rows from item selector
+(function () {
+	if (!window.location.pathname.includes("point-of-sale")) return;
+
+	let attempts = 0;
+	const max_attempts = 10;
+
+	const interval = setInterval(() => {
+		attempts++;
+
+		if (erpnext?.PointOfSale?.Controller) {
+			erpnext.PointOfSale.Controller.prototype.on_cart_update = async function (args) {
+				frappe.dom.freeze();
+				if (this.frm.doc.set_warehouse !== this.settings.warehouse) {
+					this.frm.set_value("set_warehouse", this.settings.warehouse);
+				}
+				let item_row = undefined;
+				try {
+					let { field, value, item } = args;
+
+					const from_selector = field === "qty" && value === "+1";
+					item_row = from_selector ? {} : this.get_item_from_frm(item);
+					const item_row_exists = !$.isEmptyObject(item_row);
+
+					if (from_selector) value = 1;
+
+					if (item_row_exists) {
+						if (field === "qty") value = flt(value);
+
+						if (
+							["qty", "conversion_factor"].includes(field) &&
+							value > 0 &&
+							!this.allow_negative_stock
+						) {
+							const qty_needed =
+								field === "qty"
+									? value * item_row.conversion_factor
+									: item_row.qty * value;
+							await this.check_stock_availability(
+								item_row,
+								qty_needed,
+								this.frm.doc.set_warehouse
+							);
+						}
+
+						if (this.is_current_item_being_edited(item_row) || from_selector) {
+							await frappe.model.set_value(
+								item_row.doctype,
+								item_row.name,
+								field,
+								value
+							);
+							if (item.serial_no && from_selector) {
+								await frappe.model.set_value(
+									item_row.doctype,
+									item_row.name,
+									"serial_no",
+									item_row.serial_no + `\n${item.serial_no}`
+								);
+							}
+							this.update_cart_html(item_row);
+						}
+					} else {
+						if (!this.frm.doc.customer) return this.raise_customer_selection_alert();
+
+						const { item_code, batch_no, serial_no, rate, uom, stock_uom } = item;
+
+						if (!item_code) return;
+
+						if (rate == undefined || rate == 0) {
+							frappe.show_alert({
+								message: __("Price is not set for the item."),
+								indicator: "orange",
+							});
+							frappe.utils.play_sound("error");
+							return;
+						}
+						const new_item = {
+							item_code,
+							batch_no,
+							rate,
+							uom,
+							[field]: value,
+							stock_uom,
+						};
+
+						if (serial_no) {
+							await this.check_serial_no_availablilty(
+								item_code,
+								this.frm.doc.set_warehouse,
+								serial_no
+							);
+							new_item["serial_no"] = serial_no;
+						}
+
+						new_item["use_serial_batch_fields"] = 1;
+						new_item["warehouse"] = this.settings.warehouse;
+						if (field === "serial_no") new_item["qty"] = value.split(`\n`).length || 0;
+
+						item_row = this.frm.add_child("items", new_item);
+
+						if (field === "qty" && value !== 0 && !this.allow_negative_stock) {
+							const qty_needed = value * item_row.conversion_factor;
+							await this.check_stock_availability(
+								item_row,
+								qty_needed,
+								this.frm.doc.set_warehouse
+							);
+						}
+
+						await this.trigger_new_item_events(item_row);
+
+						this.update_cart_html(item_row);
+
+						if (this.item_details.$component.is(":visible"))
+							this.edit_item_details_of(item_row);
+
+						if (
+							this.check_serial_batch_selection_needed(item_row) &&
+							!this.item_details.$component.is(":visible")
+						)
+							this.edit_item_details_of(item_row);
+					}
+				} catch (error) {
+					console.log(error);
+				} finally {
+					frappe.dom.unfreeze();
+					return item_row; // eslint-disable-line no-unsafe-finally
+				}
+			};
+
+			clearInterval(interval);
+		}
+
+		if (attempts >= max_attempts) {
+			clearInterval(interval); // stop trying after max attempts
+		}
+	}, 300);
+})();
+
+// Override get_form_fields to include batch_no in POS ItemDetails
+(function () {
+	if (!window.location.pathname.includes("point-of-sale")) return;
+
+	let attempts = 0;
+	const max_attempts = 10;
+
+	const interval = setInterval(() => {
+		attempts++;
+
+		if (erpnext?.PointOfSale?.ItemDetails) {
+			erpnext.PointOfSale.ItemDetails.prototype.get_form_fields = function (item) {
+				const fields = [
+					"qty",
+					"uom",
+					"rate",
+					"conversion_factor",
+					"discount_percentage",
+					"warehouse",
+					"actual_qty",
+					"price_list_rate",
+					"batch_no",
+				];
+
+				if (item.has_serial_no || item.serial_no) {
+					fields.push("serial_no");
+				}
+
+				return fields;
+			};
+
+			clearInterval(interval);
+		}
+
+		if (attempts >= max_attempts) {
+			clearInterval(interval); // stop trying after max attempts
+		}
+	}, 300);
+})();
 
 pos_customization.get_device_id = function () {
 	let device_id = localStorage.getItem("pos_device_id");
@@ -51,7 +232,7 @@ function get_pos_profile_settings(frm, callback) {
 		function (value) {
 			const settings = value || {};
 			callback(settings);
-		},
+		}
 	);
 }
 
@@ -287,7 +468,7 @@ function add_salesperson_auth_section(frm) {
             <div id="pin-input-section" style="display: none;">
                 <div class="form-group" style="margin-bottom: 10px;">
                     <label style="font-weight: 500; margin-bottom: 5px; display: block; font-size: 13px;">${__(
-						"Enter Your 4-Digit PIN",
+						"Enter Your 4-Digit PIN"
 					)}</label>
                     <div style="display: flex; gap: 8px; align-items: flex-start;">
                         <input
@@ -478,7 +659,7 @@ function verify_salesperson_pin(frm) {
 						message: __("Welcome, {0}!", [r.message.salesperson_name]),
 						indicator: "green",
 					},
-					3,
+					3
 				);
 			} else {
 				$("#pin-input-section").show();
