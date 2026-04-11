@@ -2,147 +2,7 @@
 frappe.provide("pos_customization");
 frappe.provide("erpnext");
 
-// Override on_cart_update to always add new cart item rows from item selector
-(function () {
-	if (!window.location.pathname.includes("point-of-sale")) return;
-
-	let attempts = 0;
-	const max_attempts = 10;
-
-	const interval = setInterval(() => {
-		attempts++;
-
-		if (erpnext?.PointOfSale?.Controller) {
-			erpnext.PointOfSale.Controller.prototype.on_cart_update = async function (args) {
-				frappe.dom.freeze();
-				if (this.frm.doc.set_warehouse !== this.settings.warehouse) {
-					this.frm.set_value("set_warehouse", this.settings.warehouse);
-				}
-				let item_row = undefined;
-				try {
-					let { field, value, item } = args;
-
-					const from_selector = field === "qty" && value === "+1";
-					item_row = from_selector ? {} : this.get_item_from_frm(item);
-					const item_row_exists = !$.isEmptyObject(item_row);
-
-					if (from_selector) value = 1;
-
-					if (item_row_exists) {
-						if (field === "qty") value = flt(value);
-
-						if (
-							["qty", "conversion_factor"].includes(field) &&
-							value > 0 &&
-							!this.allow_negative_stock
-						) {
-							const qty_needed =
-								field === "qty"
-									? value * item_row.conversion_factor
-									: item_row.qty * value;
-							await this.check_stock_availability(
-								item_row,
-								qty_needed,
-								this.frm.doc.set_warehouse
-							);
-						}
-
-						if (this.is_current_item_being_edited(item_row) || from_selector) {
-							await frappe.model.set_value(
-								item_row.doctype,
-								item_row.name,
-								field,
-								value
-							);
-							if (item.serial_no && from_selector) {
-								await frappe.model.set_value(
-									item_row.doctype,
-									item_row.name,
-									"serial_no",
-									item_row.serial_no + `\n${item.serial_no}`
-								);
-							}
-							this.update_cart_html(item_row);
-						}
-					} else {
-						if (!this.frm.doc.customer) return this.raise_customer_selection_alert();
-
-						const { item_code, batch_no, serial_no, rate, uom, stock_uom } = item;
-
-						if (!item_code) return;
-
-						if (rate == undefined || rate == 0) {
-							frappe.show_alert({
-								message: __("Price is not set for the item."),
-								indicator: "orange",
-							});
-							frappe.utils.play_sound("error");
-							return;
-						}
-						const new_item = {
-							item_code,
-							batch_no,
-							rate,
-							uom,
-							[field]: value,
-							stock_uom,
-						};
-
-						if (serial_no) {
-							await this.check_serial_no_availablilty(
-								item_code,
-								this.frm.doc.set_warehouse,
-								serial_no
-							);
-							new_item["serial_no"] = serial_no;
-						}
-
-						new_item["use_serial_batch_fields"] = 1;
-						new_item["warehouse"] = this.settings.warehouse;
-						if (field === "serial_no") new_item["qty"] = value.split(`\n`).length || 0;
-
-						item_row = this.frm.add_child("items", new_item);
-
-						if (field === "qty" && value !== 0 && !this.allow_negative_stock) {
-							const qty_needed = value * item_row.conversion_factor;
-							await this.check_stock_availability(
-								item_row,
-								qty_needed,
-								this.frm.doc.set_warehouse
-							);
-						}
-
-						await this.trigger_new_item_events(item_row);
-
-						this.update_cart_html(item_row);
-
-						if (this.item_details.$component.is(":visible"))
-							this.edit_item_details_of(item_row);
-
-						if (
-							this.check_serial_batch_selection_needed(item_row) &&
-							!this.item_details.$component.is(":visible")
-						)
-							this.edit_item_details_of(item_row);
-					}
-				} catch (error) {
-					console.log(error);
-				} finally {
-					frappe.dom.unfreeze();
-					return item_row; // eslint-disable-line no-unsafe-finally
-				}
-			};
-
-			clearInterval(interval);
-		}
-
-		if (attempts >= max_attempts) {
-			clearInterval(interval); // stop trying after max attempts
-		}
-	}, 300);
-})();
-
-// Override get_form_fields to include batch_no in POS ItemDetails
+// Override to add Pick Serial/Batch button and remove auto-fetch btn
 (function () {
 	if (!window.location.pathname.includes("point-of-sale")) return;
 
@@ -153,6 +13,7 @@ frappe.provide("erpnext");
 		attempts++;
 
 		if (erpnext?.PointOfSale?.ItemDetails) {
+			// Override get_form_fields
 			erpnext.PointOfSale.ItemDetails.prototype.get_form_fields = function (item) {
 				const fields = [
 					"qty",
@@ -163,22 +24,163 @@ frappe.provide("erpnext");
 					"warehouse",
 					"actual_qty",
 					"price_list_rate",
-					"batch_no",
 				];
 
-				if (item.has_serial_no || item.serial_no) {
-					fields.push("serial_no");
+				if (item.serial_and_batch_bundle) {
+					fields.push("serial_and_batch_bundle");
 				}
+				if (item.has_serial_no || item.serial_no) fields.push("serial_no");
+				if (item.has_batch_no || item.batch_no) fields.push("batch_no");
 
 				return fields;
+			};
+
+			// Override render_form to inject Pick Serial/Batch button
+			erpnext.PointOfSale.ItemDetails.prototype.render_form = function (item) {
+				const fields_to_display = this.get_form_fields(item);
+				this.$form_container.html("");
+
+				fields_to_display.forEach((fieldname) => {
+					this.$form_container.append(
+						`<div class="${fieldname}-control" data-fieldname="${fieldname}"></div>`
+					);
+
+					const field_meta = this.item_meta.fields.find(
+						(df) => df.fieldname === fieldname
+					);
+					if (fieldname === "discount_percentage") field_meta.label = __("Discount (%)");
+
+					const me = this;
+					this[`${fieldname}_control`] = frappe.ui.form.make_control({
+						df: {
+							...field_meta,
+							onchange: function () {
+								me.events.form_updated(me.current_item, fieldname, this.value);
+							},
+						},
+						parent: this.$form_container.find(`.${fieldname}-control`),
+						render_input: true,
+					});
+					this[`${fieldname}_control`].set_value(item[fieldname]);
+				});
+
+				this.resize_serial_control(item);
+
+				// Inject Pick Serial/Batch button
+				this.$form_container.append(
+					`<div class="btn btn-sm btn-secondary pick-serial-batch-btn" style="width:100%; margin-top: 8px;">
+                            ${__("Pick Serial / Batch")}
+                        </div>`
+				);
+
+				this.bind_custom_control_change_event();
+
+				// Remove previous to avoid stacking listeners
+				this.$component.off("click", ".pick-serial-batch-btn");
+				this.$component.on("click", ".pick-serial-batch-btn", () => {
+					const frm = this.events.get_frm();
+					const item = frm.doc.items.find((i) => i.name === this.name);
+					if (!item) return;
+					let me = this;
+
+					if (me.qty_control) {
+						const live_qty = flt(me.qty_control.get_value());
+						if (live_qty) item.qty = live_qty;
+					}
+
+					frappe.db
+						.get_value("Item", item.item_code, ["has_batch_no", "has_serial_no"])
+						.then((r) => {
+							if (
+								!r.message ||
+								(!r.message.has_batch_no && !r.message.has_serial_no)
+							) {
+								return;
+							}
+
+							item.has_serial_no = r.message.has_serial_no;
+							item.has_batch_no = r.message.has_batch_no;
+							item.type_of_transaction = item.qty > 0 ? "Outward" : "Inward";
+
+							item.title = item.has_serial_no
+								? __("Select Serial No")
+								: __("Select Batch No");
+
+							if (item.has_serial_no && item.has_batch_no) {
+								item.title = __("Select Serial and Batch");
+							}
+
+							new erpnext.SerialBatchPackageSelector(frm, item, (result) => {
+								if (result) {
+									let qty = Math.abs(result.total_qty);
+									if (frm.is_return) {
+										qty = qty * -1;
+									}
+
+									frappe.model.set_value(item.doctype, item.name, {
+										serial_and_batch_bundle: result.name,
+										use_serial_batch_fields: 0,
+										incoming_rate: result.avg_rate,
+										qty:
+											qty /
+											flt(
+												item.conversion_factor || 1,
+												precision("conversion_factor", item)
+											),
+									});
+
+									// Hide legacy fields from the form since bundle takes over
+									me.$form_container.find(".batch_no-control").hide();
+									me.$form_container.find(".serial_no-control").hide();
+
+									// Inject serial_and_batch_bundle field if not already present
+									if (
+										!me.$form_container.find(
+											".serial_and_batch_bundle-control"
+										).length
+									) {
+										const field_meta = me.item_meta.fields.find(
+											(df) => df.fieldname === "serial_and_batch_bundle"
+										);
+										if (field_meta) {
+											me.$form_container
+												.find(".pick-serial-batch-btn")
+												.before(
+													`<div class="serial_and_batch_bundle-control" data-fieldname="serial_and_batch_bundle"></div>`
+												);
+											me["serial_and_batch_bundle_control"] =
+												frappe.ui.form.make_control({
+													df: {
+														...field_meta,
+														onchange: function () {
+															me.events.form_updated(
+																me.current_item,
+																"serial_and_batch_bundle",
+																this.value
+															);
+														},
+													},
+													parent: me.$form_container.find(
+														".serial_and_batch_bundle-control"
+													),
+													render_input: true,
+												});
+										}
+									}
+									me["serial_and_batch_bundle_control"] &&
+										me["serial_and_batch_bundle_control"].set_value(
+											result.name
+										);
+								}
+							});
+						});
+				});
 			};
 
 			clearInterval(interval);
 		}
 
-		if (attempts >= max_attempts) {
-			clearInterval(interval); // stop trying after max attempts
-		}
+		if (attempts >= max_attempts) clearInterval(interval);
 	}, 300);
 })();
 
